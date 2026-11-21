@@ -7,16 +7,16 @@ $('disconnect').addEventListener('click',async()=>{try{await Niimbot.disconnect(
 
 const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
 let recognition=null;let awaitingVoiceConfirmation=false;
-const defaultFoods=[{name:'SAMBAR',aliases:['sambar','sambhar']},{name:'AVIAL',aliases:['avial','aviyal','a vial']},{name:'PULIHORA',aliases:['pulihora','puli hora']}];
+const defaultFoods=[{name:'SAMBAR',aliases:['sambar','sambhar','summer','some bar']},{name:'AVIAL',aliases:['avial','aviyal','a vial']},{name:'PULIHORA',aliases:['pulihora','puli hora']}];
 let dictionary;
 try{const stored=JSON.parse(localStorage.getItem('niimbotFoodDictionary')||'null');dictionary=Array.isArray(stored)?stored:defaultFoods;}catch(_){dictionary=defaultFoods;}
 function saveDictionary(){try{localStorage.setItem('niimbotFoodDictionary',JSON.stringify(dictionary));}catch(_){status('Could not save food dictionary on this browser.');}renderDictionary();}
 function renderDictionary(){$('savedFoods').textContent=dictionary.map(e=>e.name+' ('+e.aliases.join(', ')+')').join(' • ');}
 $('saveFood').addEventListener('click',()=>{const name=$('canonical').value.trim().toUpperCase();if(!name){status('Enter a food name to save.');return;}const aliases=$('aliases').value.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);const item={name,aliases:[name.toLowerCase(),...aliases]};const index=dictionary.findIndex(e=>e.name===name);if(index>=0)dictionary[index]=item;else dictionary.push(item);saveDictionary();status('Saved '+name+' on this phone.');$('canonical').value='';$('aliases').value='';});
 function normalizeSpeech(v){return v.toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();}
-const numbers={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,twenty:20,thirty:30};
+const numbers={coffee:2,copy:1,to:2,too:2,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,twenty:20,thirty:30};
 function parseVoice(utterance){
- let t=' '+normalizeSpeech(utterance)+' ';
+ let t=' '+normalizeSpeech(utterance)+' '; t=t.replace(/\bprinter\b/g,' print '); t=t.replace(/\bto coffee\b/g,' two copies ');
  t=t.replace(/^\s*(?:please\s+)?(?:print|make|give me)\s+/,' ');
  let count=null;
  const qty=/(?:\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty)\s*(?:labels?|copies|stickers?)\b)|(?:\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty)\b)/g;
@@ -32,20 +32,29 @@ function hideVoiceConfirmation(){awaitingVoiceConfirmation=false;$('confirmBox')
 $('food').addEventListener('input',hideVoiceConfirmation);$('copies').addEventListener('input',hideVoiceConfirmation);$('price').addEventListener('input',hideVoiceConfirmation);
 $('cancelVoice').addEventListener('click',()=>{hideVoiceConfirmation();status('Voice order cancelled.');});
 $('confirmPrint').addEventListener('click',()=>{if(!awaitingVoiceConfirmation)return;hideVoiceConfirmation();if(!connected){status('Voice order prepared. Connect Printer first, then tap Print Labels.');return;}$('print').click();});
+function say(text,done){if(!window.speechSynthesis){status('Speech playback unavailable. Confirm on screen.');return;}try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='en-US';u.rate=.9;u.onend=()=>{if(done)done();};u.onerror=()=>status('Voice playback failed. Confirm on screen.');speechSynthesis.speak(u);}catch(e){status('Speech playback failed: '+e.message);}}
+function listenForConfirmation(){if(!SpeechRecognition)return;const r=new SpeechRecognition();recognition=r;r.lang='en-US';r.interimResults=false;r.maxAlternatives=1;let responded=false;
+r.onresult=e=>{responded=true;const response=normalizeSpeech(e.results[0][0].transcript);$('heard').textContent='Confirmation heard: '+response;
+if(/\b(yes|yeah|yep|correct|confirm|okay|ok|print)\b/.test(response)){if(!awaitingVoiceConfirmation)return;hideVoiceConfirmation();if(connected){$('print').click();say('Printing now.');}else{status('Connect Printer first. Order is ready.');say('Printer is not connected. Please connect the printer.');}}
+else if(/\b(no|cancel|stop|wrong)\b/.test(response)){hideVoiceConfirmation();status('Voice order cancelled.');say('Cancelled.');}
+else{status('Confirmation not understood. Use on-screen confirmation or tap microphone again.');}};
+r.onerror=e=>status('Confirmation microphone error: '+e.error+'. You can use the on-screen buttons.');
+r.onend=()=>{$('mic').disabled=false;if(!responded&&awaitingVoiceConfirmation)status('No spoken confirmation detected. You can confirm on screen or retry the microphone.');};
+try{r.start();status('Listening for YES or NO…');}catch(e){$('mic').disabled=false;status('Chrome blocked automatic microphone restart. Confirm on screen or tap microphone again: '+e.message);}
+}
 $('mic').addEventListener('click',()=>{
  if(!SpeechRecognition){status('Voice recognition is not available in this browser. Try Chrome on Android.');return;}
- hideVoiceConfirmation();
- recognition=new SpeechRecognition();recognition.lang='en-US';recognition.interimResults=false;recognition.maxAlternatives=1;
- $('mic').disabled=true;$('heard').textContent='Listening…';
- recognition.onresult=e=>{const spoken=e.results[0][0].transcript;const order=parseVoice(spoken);$('heard').textContent='Heard: '+spoken;
- if(!order.food||!Number.isInteger(order.copies)||order.copies<1||order.copies>30){status('Could not understand the order. Try again.');return;}
+ hideVoiceConfirmation();const r=new SpeechRecognition();recognition=r;r.lang='en-US';r.interimResults=false;r.maxAlternatives=1;
+ $('mic').disabled=true;$('heard').textContent='Listening…';let order=null;
+ r.onresult=e=>{const spoken=e.results[0][0].transcript;order=parseVoice(spoken);$('heard').textContent='Heard: '+spoken;
+ if(!order.food||!order.matched||!Number.isInteger(order.copies)||order.copies<1||order.copies>30){status('Could not safely match a saved food name. Add a speech alternative or retry. Nothing printed.');order=null;return;}
  $('food').value=order.food;$('copies').value=order.copies;preview();awaitingVoiceConfirmation=true;
- $('confirmText').textContent='Print '+order.copies+' × '+order.food+'?'+(order.matched?' Matched saved food name.':' Check spelling carefully; not found in saved food names.');
- $('confirmBox').classList.remove('hidden');status('Voice order ready. Check the food name and confirm.');
+ $('confirmText').textContent='Print '+order.copies+' × '+order.food+'? Say YES or NO.';
+ $('confirmBox').classList.remove('hidden');status('Voice order ready. Waiting to ask for spoken confirmation.');
  };
- recognition.onerror=e=>{status('Microphone error: '+e.error);$('heard').textContent='';};
- recognition.onend=()=>{$('mic').disabled=false;};
- try{recognition.start();}catch(e){$('mic').disabled=false;status('Could not start microphone: '+e.message);}
+ r.onerror=e=>{status('Microphone error: '+e.error);$('heard').textContent='';};
+ r.onend=()=>{if(order&&awaitingVoiceConfirmation){say(order.food+', '+order.copies+' labels. Is that correct? Say yes or no.',listenForConfirmation);}else{$('mic').disabled=false;}};
+ try{r.start();}catch(e){$('mic').disabled=false;status('Could not start microphone: '+e.message);}
 });
 renderDictionary();
 </script></body></html>
